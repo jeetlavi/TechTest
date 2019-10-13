@@ -1,0 +1,4 @@
+aws cloudformation create-stack --stack-name techtest%random% --template-body "file://<<TechTest.YAML file location in your machine>>" --parameters ParameterKey=InputKeyName,ParameterValue=<<Key Name>>
+
+For Example:
+aws cloudformation create-stack --stack-name techtest%random% --profile himan --template-body "file://C:\Users\Himan\Desktop\A&G\techtest.yaml" --parameters ParameterKey=InputKeyName,ParameterValue=HimanKey

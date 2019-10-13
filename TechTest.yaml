@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters: 
+  InputInstanceType: 
+    Type: String
+    Default: t2.micro
+    Description: Using t2.micro as default instance type.
+
+  InputCIDRBlock: 
+    Type: String
+    Default: 10.11.12.0/24
+    AllowedValues: 
+      - 10.11.12.0/24
+      - 10.11.12.0/28
+      - 10.11.12.0/16
+    Description: Enter 10.11.12.0/16, 10.11.12.0/24, or 10.11.12.0/28. Default is 10.11.12.0/24.
+
+  InputKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing Key pair name
+
+Mappings:
+  AMISelection: 
+    us-east-1:
+      Win2012R2: ami-05ad3e9ea4dcd9863
+    us-east-2:
+      Win2012R2: ami-06d29c77f7ab40cf2
+    us-west-1:
+      Win2012R2: ami-05c71b3ca4af2fbee
+    us-west-2:
+      Win2012R2: ami-083ae6bd726521e4a
+    eu-west-1:
+      Win2012R2: ami-0c43411b5fd2c1129
+    eu-west-2:
+      Win2012R2: ami-010ae2c4ae830c4dd
+    eu-west-3:
+      Win2012R2: ami-05e9b803073bb06b8
+    eu-central-1:
+      Win2012R2: ami-09a023d2317d65420
+    eu-north-1:
+      Win2012R2: ami-08f045fc3b43c4b16
+    ap-northeast-1:
+      Win2012R2: ami-0a7f0aeadc4d0fbfe
+    ap-northeast-2:
+      Win2012R2: ami-053df08898d96e587
+    ap-southeast-1:
+      Win2012R2: ami-003bcb0466a4c1ee8
+    ap-southeast-2:
+      Win2012R2: ami-061e7ecf5eb3633e2
+    ap-south-1:
+      Win2012R2: ami-0773dc0299ece2df6
+    ca-central-1:
+      Win2012R2: ami-0c2b4ed63c22f1ea9
+    sa-east-1:
+      Win2012R2: ami-041a00620190a86f9
+
+Resources:
+  TechTestVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        Ref: InputCIDRBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+      - Key: Name
+        Value: !Join ["-",[TechTestVPC,!Ref "AWS::StackName"]]
+
+  TechTestSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: TechTestVPC
+      CidrBlock: 
+        Ref: InputCIDRBlock
+      AvailabilityZone:
+        Fn::Select: 
+        - 0
+        - Fn::GetAZs: ""
+      MapPublicIpOnLaunch: Yes
+      Tags:
+      - Key: Name
+        Value: !Join ["-",[Web,Ref: "InputCIDRBlock"]]
+
+  TechTestInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Join ["-",[TechTestVPC-IGW,!Ref "AWS::StackName"]]
+
+  AttachTechTestIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: TechTestInternetGateway
+      VpcId:
+        Ref: TechTestVPC
+
+  TechTestRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      VpcId:
+        Ref: TechTestVPC
+      Tags:
+      - Key: Name
+        Value: !Join ["-",["Web-Route", !Ref "AWS::StackName"]]
+
+  AddInternetOutRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachTechTestIGW
+    Properties: 
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TechTestInternetGateway
+      RouteTableId: !Ref TechTestRouteTable
+
+  WebRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref TechTestSubnet
+      RouteTableId: !Ref TechTestRouteTable
+
+  TechTestWebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: TechTestWebSG
+      GroupDescription: SG to facilitate Infra resources
+      SecurityGroupIngress:
+      - IpProtocol: TCP
+        CidrIp: 0.0.0.0/0
+        Description: Allowing http access to Internet
+        FromPort: 80
+        ToPort: 80
+      Tags:
+      - Key: Name
+        Value: TechTestWebSG
+      VpcId: !Ref TechTestVPC
+
+  TechTestEC2Insatnce:
+    Type: AWS::EC2::Instance
+    Properties: 
+      AvailabilityZone:
+        Fn::Select: 
+        - 0
+        - Fn::GetAZs: ""
+      ImageId: !FindInMap [AMISelection, !Ref "AWS::Region", Win2012R2]
+      NetworkInterfaces: 
+      - AssociatePublicIpAddress: Yes
+        DeleteOnTermination: Yes
+        Description: Adding ENI for public IP address
+        DeviceIndex: 0
+        SubnetId: !Ref TechTestSubnet
+        GroupSet: 
+        - !Ref TechTestWebSG
+      InstanceType:
+        Ref: InputInstanceType
+      KeyName: 
+        Ref: InputKeyName
+      Tags: 
+      - Key: Name
+        Value: TechTestWebServer
+      UserData:
+        !Base64 |
+          <powershell>
+          Import-Module ServerManager;
+          Enable-WindowsOptionalFeature -Online -NoRestart -FeatureName 'IIS-WebServerRole', 'IIS-WebServer', 'IIS-ManagementConsole';
+          $instanceId=(Invoke-WebRequest -Uri 'http://169.254.169.254/latest/meta-data/instance-id').Content;
+          New-Object psobject -Property @{InstanceID = $instanceId} | ConvertTo-HTML -Property InstanceID -Title Output -Head "This page displays the output." | Out-File C:\inetpub\wwwroot\ID.html;
+          </powershell>
+
+Outputs:
+  Return:
+    Description: TechTest web server Public IP
+    Value: !GetAtt TechTestEC2Insatnce.PublicIp
